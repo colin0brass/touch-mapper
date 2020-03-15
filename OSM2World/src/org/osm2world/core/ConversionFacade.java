@@ -137,7 +137,7 @@ public class ConversionFacade {
 				new RailwayModule(),
 				new BuildingModule(),
 				//new ParkingModule(),
-				//new TreeModule(),
+				new TreeModule(),
 				//new StreetFurnitureModule(),
 				//new TrafficSignModule(),
 				new WaterModule()

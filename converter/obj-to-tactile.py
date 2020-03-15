@@ -11,24 +11,41 @@ import math
 import random
 import time
 import re
+from mathutils import Vector
+from mathutils import Matrix
+import numpy as np
 
 script_dir = os.path.dirname(__file__)
 sys.path.insert(1, "%s/blender/2.78/python/lib/python3.5/svgwrite" % (script_dir,))
 # These modules imported at the site of use
 
-ROAD_HEIGHT_CAR_MM = 0.82 # 3 x 0.25-0.3mm layers
-ROAD_HEIGHT_PEDESTRIAN_MM = 1.5
-BUILDING_HEIGHT_MM = 2.9
-BASE_HEIGHT_MM = 0.6
+points_of_interest_coords = []
+
+#ROAD_HEIGHT_CAR_MM = 0.82 # 3 x 0.25-0.3mm layers
+ROAD_HEIGHT_CAR_MM = 2.0
+ROAD_HEIGHT_PEDESTRIAN_MM = 1.0
+BUILDING_HEIGHT_MM = 3.0
+#BASE_HEIGHT_MM = 0.6
+BASE_HEIGHT_MM = 5
 BASE_OVERLAP_MM = 0.01
 WATER_AREA_DEPTH_MM = 1.5
 WATER_WAVE_DISTANCE_MM = 10.3
+FOREST_TEXTURE_DEPTH_MM = 1.0
+FOREST_TEXTURE_DISTANCE_MM = 2
 WATERWAY_DEPTH_MM = 0.55 # 2 x 0.25-0.3mm layers
 BORDER_WIDTH_MM = 1.2 # 3 shells
-BORDER_HEIGHT_MM = (ROAD_HEIGHT_PEDESTRIAN_MM + BUILDING_HEIGHT_MM) / 2
+#BORDER_HEIGHT_MM = (ROAD_HEIGHT_PEDESTRIAN_MM + BUILDING_HEIGHT_MM) / 2
+BORDER_HEIGHT_MM = ROAD_HEIGHT_CAR_MM
 BORDER_HORIZONTAL_OVERLAP_MM = 0.05
-MARKER_HEIGHT_MM = BUILDING_HEIGHT_MM + 2
+MARKER_HEIGHT_MM = BORDER_HEIGHT_MM + 2
 MARKER_RADIUS_MM = MARKER_HEIGHT_MM * 0.5
+FINGER_INDENT_WIDTH_MM = 20
+FINGER_INDENT_DEPTH_MM = 20
+FINGER_INDENT_HEIGHT = min(BASE_HEIGHT_MM/2, 2)
+FINGER_INDENT_X_OFFSET_MM = 10
+LOCATION_MARKER_RADIUS_MM = 5
+LOCATION_MARKER_DEPTH_MM = 2
+BUILDING_MIN_DIMENSION_MM = 2.0
 
 def warning(*objs):
     print("WARNING: ", *objs, file=sys.stderr)
@@ -111,12 +128,14 @@ def add_svg_object(dwg, main_g, ob, color):
             #g.set_desc(ob_type)
             pass
         if ob_type == 'road':
-            g['stroke-width'] = 0.8 # Make roads a bit thicker so embosser draws them
+#            g['stroke-width'] = 0.8 # Make roads a bit thicker so embosser draws them
+            g['stroke-width'] = 50 # Make roads a bit thicker so embosser draws them
     add_polygons(dwg, g, ob)
 
 def add_road_overlay_object(dwg, main_g, ob):
     g = dwg.g(opacity=0.0, fill='red', stroke='blue')
-    g['stroke-width'] = 5.0
+#    g['stroke-width'] = 5.0
+    g['stroke-width'] = 50.0
     main_g.add(g)
 
     m = ob_name_matcher.match(ob.name)
@@ -242,9 +261,68 @@ def create_cube(min_x, min_y, max_x, max_y, min_z, max_z):
     bpy.ops.object.mode_set(mode = 'OBJECT')
     cube.location = [ (min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2 ]
     cube.scale = [ (max_x - min_x) / 2, (max_y - min_y) / 2, (max_z - min_z) / 2 ]
+    print('Cube scale:', cube.scale)
     bpy.context.scene.update() # flush changes to location and scale
     return cube
 
+def create_cube_centred(x, y, z, x_size, y_size, z_size):
+    return create_cube(x - x_size/2, y - y_size/2, x + x_size/2, y + y_size/2, z - z_size/2, z + z_size/2)
+
+def cut_out_shape(base, indent):
+    # use boolean modifier to create cut-outs
+    mod_bool = base.modifiers.new(name='bool', type='BOOLEAN')
+    mod_bool.operation = 'DIFFERENCE'
+    mod_bool.solver='CARVE' # default (believe 'BMESH') didn't work properly for cross
+    mod_bool.object = indent
+    
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.context.scene.objects.active = base
+    res = bpy.ops.object.modifier_apply(apply_as = 'DATA', modifier = mod_bool.name)
+    
+def create_cross(x, y, z, width, depth):
+    cross_shapes = []
+    cross_shapes.append(create_cube_centred(x, y - 0.5 * width * 1, z, width/2, width/2, depth))
+    cross_shapes.append(create_cube_centred(x, y + 0.5 * width * 1, z, width/2, width/2, depth))
+    cross_shapes.append(create_cube_centred(x - 0.25 * width * 1, y, z, width/2, width/2, depth))
+    cross_shapes.append(create_cube_centred(x + 0.25 * width * 1, y, z, width/2, width/2, depth))
+
+    cross = join_objects(cross_shapes, 'joined')
+    
+    return cross
+
+def create_cylinder(x, y, z, diameter, depth):
+    bpy.ops.mesh.primitive_cylinder_add(radius=diameter/2, depth=depth)
+    cylinder = bpy.context.active_object
+    bpy.ops.object.mode_set(mode = 'EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.normals_make_consistent()
+    bpy.ops.object.mode_set(mode = 'OBJECT')
+    cylinder.location = [ x, y, z ]
+    bpy.context.scene.update() # flush changes to location and scale
+    return cylinder
+
+def create_indent(base, shape, min_x, min_y, max_x, max_y, min_z, max_z):
+    unhandled_shape = False
+    
+    if shape == 'cylinder':
+        indent = create_cylinder( (min_x + max_x)/2, (min_y + max_y)/2, (min_z + max_z)/2, (max_x - min_x), (max_z - min_z)*2)
+    elif shape == 'cube':
+        indent = create_cube_centred(min_x + (max_x-min_x)/2, min_y + (max_y-min_y)/2, min_z + (max_z-min_z)/2, (max_x - min_x), (max_y - min_y), (max_z - min_z)*2)
+    elif shape == 'cross':
+        indent = create_cross( (min_x + max_x)/2, (min_y + max_y)/2, (min_z + max_z)/2, (max_x - min_x), (max_z - min_z)*2)
+    else:
+        print('UNHANDLED INDENT SHAPE: ' + shape)
+        unhandled_shape = True
+        
+    if not unhandled_shape and indent != None:
+        indent.name = 'Indent'
+        
+        cut_out_shape(base, indent)
+        
+        bpy.ops.object.select_all(action='DESELECT')
+        indent.select = True
+        bpy.ops.object.delete()
+        
 def add_borders(min_x, min_y, max_x, max_y, width, bottom, height, corner_height):
     borders = []
     borders.append(create_cube(min_x, min_y, min_x + width, max_y, bottom, height))
@@ -257,6 +335,27 @@ def add_borders(min_x, min_y, max_x, max_y, width, bottom, height, corner_height
     create_cube(max_x - width*0.99, max_y - width*0.99, max_x - width*2.7, max_y - width*2.7, 0, height).name = 'CornerInside'
     create_cube(max_x, max_y, max_x - width*3, max_y - width*3, height*0.99, corner_height).name = 'CornerTop'
 
+def add_guide_markers(base, base_height, min_x, min_y, max_x, max_y, scale, mm_to_units, overlap):
+    print('Adding guide markers on base') # for some reason, without the overlap, face was missing
+    create_indent(base, 'cylinder', \
+        min_x + FINGER_INDENT_X_OFFSET_MM * mm_to_units, \
+        max_y - FINGER_INDENT_DEPTH_MM * mm_to_units - overlap, \
+        min_x + (FINGER_INDENT_X_OFFSET_MM + FINGER_INDENT_WIDTH_MM) * mm_to_units, \
+        max_y + FINGER_INDENT_DEPTH_MM * mm_to_units - overlap, \
+        -base_height + overlap - FINGER_INDENT_HEIGHT * mm_to_units, \
+        -base_height + overlap + FINGER_INDENT_HEIGHT * mm_to_units)
+    
+    if len(points_of_interest_coords) > 0:
+        for (shape, name, [x,y,z]) in points_of_interest_coords:
+            print(shape, name, x, y, z)
+            create_indent(base, shape, \
+                x - LOCATION_MARKER_RADIUS_MM * mm_to_units, \
+                y - LOCATION_MARKER_RADIUS_MM * mm_to_units, \
+                x + LOCATION_MARKER_RADIUS_MM * mm_to_units, \
+                y + LOCATION_MARKER_RADIUS_MM * mm_to_units, \
+                -base_height + overlap - LOCATION_MARKER_DEPTH_MM * mm_to_units, \
+                -base_height + overlap + LOCATION_MARKER_DEPTH_MM * mm_to_units)
+
 def create_bounds(min_x, min_y, max_x, max_y, scale, no_borders):
     mm_to_units = scale / 1000
     if not no_borders:
@@ -266,6 +365,9 @@ def create_bounds(min_x, min_y, max_x, max_y, scale, no_borders):
     overlap = BASE_OVERLAP_MM * mm_to_units # move cube this much up so that it overlaps enough with objects they merge into one object
     base_cube = create_cube(min_x, min_y, max_x, max_y, -base_height + overlap, overlap)
     base_cube.name = 'Base'
+    
+    add_guide_markers(base_cube, base_height, min_x, min_y, max_x, max_y, scale, mm_to_units, overlap)
+    
     return base_cube
 
 def add_marker1(args, scale):
@@ -300,6 +402,7 @@ def extrude_building(ob, height):
     bpy.ops.object.mode_set(mode = 'EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={ "value": (0.0, 0.0, height) })
+    bpy.ops.transform.resize(value=(1,1,1))
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.mesh.normals_make_consistent()
     bpy.ops.object.mode_set(mode = 'OBJECT')
@@ -381,7 +484,7 @@ def water_remesh_and_extrude(object, extrude_height):
     modifier.use_remove_disconnected = False
     bpy.ops.object.modifier_apply(apply_as='DATA', modifier=modifier.name)
 
-def water_wave_pattern(object, depth, scale):
+def apply_pattern(object, depth, scale, distance_mm, pattern='sin'):
     extrude_height = 1.0
     water_remesh_and_extrude(object, extrude_height)
 
@@ -399,13 +502,19 @@ def water_wave_pattern(object, depth, scale):
             edge_verts[str(verts[0].co.x) + ',' + str(verts[0].co.z)] = True
 
     # Set top verts' y positions. Bottom verts are at 0.
-    density = math.pi * 2 / WATER_WAVE_DISTANCE_MM / (scale/1000) 
+    #density = math.pi * 2 / WATER_WAVE_DISTANCE_MM / (scale/1000) 
+    density = math.pi * 2 / distance_mm / (scale/1000) 
     for v in bm.verts:
         if v.co.y > extrude_height / 2:
             min_height = -10000
             if str(v.co.x) + ',' + str(v.co.z) in edge_verts:
                 min_height = depth / 4
-            v.co.y = max(min_height, (math.sin(v.co.x * density) + math.sin(v.co.z * density)) * depth / 4 + depth / 2)
+            if pattern == 'sin':
+                v.co.y = max(min_height, (math.sin(v.co.x * density) + math.sin(v.co.z * density)) * depth / 4 + depth / 2)
+            elif pattern == 'square':
+                v.co.y = max(min_height, (np.sign(math.sin(v.co.x * density) + math.sin(v.co.z * density))) * depth / 4 + depth / 2)
+            else:
+                print('Unknown texture pattern:',pattern)
         else:
             v.co.y = 0
     bmesh.update_edit_mesh(object.data, tessface=False, destructive=False)
@@ -570,10 +679,12 @@ def decimate(ob):
 
 # Fatten slightly to cause overlap and avoid faces too close to each other
 def fatten(ob):
+    #fattern_value = -0.05 # less than this and programs start to "remove double vertices"
+    fattern_value = -0
     bpy.context.scene.objects.active = ob
     bpy.ops.object.mode_set(mode = 'EDIT')
     bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.transform.shrink_fatten(value=-0.05) # less than this and programs start to "remove double vertices"
+    bpy.ops.transform.shrink_fatten(value=fattern_value)
     bpy.ops.object.mode_set(mode = 'OBJECT')
 
 def do_ways(ways, height, min_x, min_y, max_x, max_y):
@@ -596,6 +707,8 @@ def do_road_areas(roads, height):
     #print("processing %s took %.2f" % (roads.name, time.clock() - t))
 
 def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
+    global points_of_interest_coords
+    
     t = time.clock()
     mm_to_units = scale / 1000
     if not no_borders:
@@ -619,12 +732,53 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
     clippable_water_areas = []
     joinable_waterways = []
     inner_water_areas = []
+    forests = []
+    inner_forests = []
+    clippable_forests = []
     deleteables = []
     for ob in all_mesh_objects():
         if ob.name.startswith('BuildingEntrance'):
             deleteables.append(ob)
         elif ob.name.startswith('Building'):
+            #print('doubling the building x & y scales for robustness')
+            #ob.scale = [1, 1, 1]
+            
+            # Apply the transform
+            #ob.data.transform(mathutils.Matrix((
+            #    (transform[0], transform[4], transform[8], transform[12]),
+            #    (transform[1], transform[5], transform[9], transform[13]),
+            #    (transform[2], transform[6], transform[10], transform[14]),
+            #    (transform[3], transform[7], transform[11], transform[15]))))
+            ob.data.update()
+            # Resize the object
+            bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY')
+            ob_x_size, ob_y_size, ob_z_size = ob.dimensions
+            dimensions_list = np.array([ob.dimensions])
+            dimensions_list = dimensions_list[np.nonzero(dimensions_list)]
+            ob_min_dimension = np.amin(dimensions_list)
+            mm_to_units = scale / 1000
+            ob_scale = max(1, BUILDING_MIN_DIMENSION_MM * mm_to_units / ob_min_dimension)
+            ob.scale = (ob_scale, 1, ob_scale)
+
             buildings.append(ob)
+            
+            # calculate median location of building
+            verts_sel = [v.co for v in ob.data.vertices if v.select]
+            pivot = sum(verts_sel, Vector()) / len(verts_sel)
+            coords_global = ob.matrix_world * pivot
+            
+            shape = 'cylinder'
+            #print('Object:', ob.name)
+            if ('all saints' in ob.name.lower()) or \
+                ('saint michael' in ob.name.lower()) or \
+                ('our lady' in ob.name.lower()) or \
+                ('church' in ob.name.lower()) or \
+                ('chapel' in ob.name.lower()):
+                shape = 'cube'
+            print(shape, ":", ob.name)
+                
+            points_of_interest_coords = points_of_interest_coords + [[shape, ob.name, coords_global]]
+            print('Building at:', coords_global)
         elif ob.name.startswith('Road'):
             if is_pedestrian(ob.name):
                 if ob.name.startswith('RoadArea'):
@@ -651,6 +805,9 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
                     joinable_waterways.append(ob)
                 elif ob.name.startswith('Water') or ob.name.startswith('AreaFountain'):
                     inner_water_areas.append(ob)
+                elif ob.name.startswith('Forest'):
+                    inner_forests.append(ob)
+                    print('Inner forest:',ob.name)
                 else:
                     print("UNHANDLED INNER OBJECT TYPE: " + ob.name)
             elif n_outside == n_total:
@@ -660,6 +817,9 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
                     clippable_waterways.append(ob)
                 elif ob.name.startswith('Water') or ob.name.startswith('AreaFountain'):
                     clippable_water_areas.append(ob)
+                elif ob.name.startswith('Forest'):
+                    clippable_forests.append(ob)
+                    print('Clippable forest:',ob.name)
                 else:
                     print("UNHANDLED CLIPPABLE OBJECT TYPE: " + ob.name)
     print("initial steps took %.2f" % (time.clock() - t))
@@ -679,6 +839,7 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
     joined_road_areas_car = join_and_clip(road_areas_car, min_co, max_co, 'CarRoadAreas')
     joined_road_areas_ped = join_and_clip(road_areas_ped, min_co, max_co, 'PedestrianRoadAreas')
     clipped_rails = join_and_clip(rails, min_co, max_co, 'Rails')
+    joined_buildings = []
     joined_buildings = join_and_clip(buildings, min_co, max_co, 'Buildings')
     
     # Buildings
@@ -700,11 +861,11 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
     if len(clippable_water_areas) > 0:
         for water in clippable_water_areas:
             clip_object_to_map(water, min_co, max_co)
-            water_wave_pattern(water, WATER_AREA_DEPTH_MM * mm_to_units, scale)
+            apply_pattern(water, WATER_AREA_DEPTH_MM * mm_to_units, scale, WATER_WAVE_DISTANCE_MM, 'sin')
         join_objects(clippable_water_areas, 'ClippedWaterAreas')
     if len(inner_water_areas):
         for water in inner_water_areas:
-            water_wave_pattern(water, WATER_AREA_DEPTH_MM * mm_to_units, scale)
+            apply_pattern(water, WATER_AREA_DEPTH_MM * mm_to_units, scale, WATER_WAVE_DISTANCE_MM, 'sin')
         join_objects(inner_water_areas, 'InnerWaterAreas')
     print("processing waters took %.2f" % (time.clock() - t))
 
@@ -718,6 +879,19 @@ def process_objects(min_x, min_y, max_x, max_y, scale, no_borders):
     do_ways(joined_roads_car, ROAD_HEIGHT_CAR_MM * mm_to_units, min_x, min_y, max_x, max_y)
     do_ways(joined_roads_ped, ROAD_HEIGHT_PEDESTRIAN_MM * mm_to_units, min_x, min_y, max_x, max_y)
 
+    # Forests
+    t = time.clock()
+    if len(clippable_forests) > 0:
+        for forest in clippable_forests:
+            clip_object_to_map(forest, min_co, max_co)
+            apply_pattern(forest, FOREST_TEXTURE_DEPTH_MM * mm_to_units, scale, FOREST_TEXTURE_DISTANCE_MM, 'square')
+        join_objects(clippable_forests, 'ClippedForests')
+    if len(inner_forests):
+        for forest in inner_forests:
+            apply_pattern(forest, FOREST_TEXTURE_DEPTH_MM * mm_to_units, scale, FOREST_TEXTURE_DISTANCE_MM, 'square')
+        join_objects(inner_forests, 'InnerForests')
+    print("processing forests took %.2f" % (time.clock() - t))
+    
 def make_tactile_map(args):
     t = time.clock()
     min_x, min_y, max_x, max_y = (args.min_x, args.min_y, args.max_x, args.max_y)
@@ -740,7 +914,7 @@ def main():
     for obj_path in args.obj_paths:
         import_obj_file(obj_path)
         base_path = os.path.splitext(obj_path)[0]
-        export_svg(base_path, args)
+        #export_svg(base_path, args)
         base_cube = make_tactile_map(args)
         move_everything([-c for c in get_minimum_coordinate(base_cube)])
         if not args.no_stl_export:

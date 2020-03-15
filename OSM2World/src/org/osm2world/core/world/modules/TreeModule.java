@@ -1,6 +1,10 @@
 package org.osm2world.core.world.modules;
 
 import static java.util.Arrays.asList;
+import static org.osm2world.core.target.common.material.Materials.*; //
+import static org.osm2world.core.target.common.material.NamedTexCoordFunction.*; //
+import static org.osm2world.core.target.common.material.TexCoordUtil.*; //
+//import static org.osm2world.core.world.modules.common.WorldModuleGeometryUtil.*; //
 import static org.osm2world.core.world.modules.common.WorldModuleGeometryUtil.filterWorldObjectCollisions;
 import static org.osm2world.core.world.modules.common.WorldModuleParseUtil.parseHeight;
 
@@ -23,6 +27,9 @@ import org.osm2world.core.map_elevation.data.EleConnector;
 import org.osm2world.core.map_elevation.data.GroundState;
 import org.osm2world.core.math.AxisAlignedBoundingBoxXZ;
 import org.osm2world.core.math.GeometryUtil;
+import org.osm2world.core.math.PolygonXYZ; //
+import org.osm2world.core.math.SimplePolygonXZ; //
+import org.osm2world.core.math.TriangleXYZ;
 import org.osm2world.core.math.VectorXYZ;
 import org.osm2world.core.math.VectorXZ;
 import org.osm2world.core.target.RenderableToAllTargets;
@@ -33,12 +40,15 @@ import org.osm2world.core.target.common.material.Material;
 import org.osm2world.core.target.common.material.Materials;
 import org.osm2world.core.target.povray.POVRayTarget;
 import org.osm2world.core.target.povray.RenderableToPOVRay;
+import org.osm2world.core.world.data.AbstractAreaWorldObject; //
+import org.osm2world.core.world.data.TerrainBoundaryWorldObject; //
 import org.osm2world.core.world.data.AreaWorldObject;
 import org.osm2world.core.world.data.NoOutlineNodeWorldObject;
 import org.osm2world.core.world.data.WaySegmentWorldObject;
 import org.osm2world.core.world.data.WorldObject;
 import org.osm2world.core.world.modules.common.ConfigurableWorldModule;
 import org.osm2world.core.world.modules.common.WorldModuleBillboardUtil;
+import org.osm2world.core.world.network.NetworkAreaWorldObject; //
 
 /**
  * adds trees, tree rows, tree groups and forests to the world
@@ -170,7 +180,9 @@ public class TreeModule extends ConfigurableWorldModule {
 					|| area.getTags().contains("landuse", "forest")
 					|| area.getTags().containsKey("wood")
 					|| area.getTags().contains("landuse", "orchard")) {
-				area.addRepresentation(new Forest(area, mapData));
+				// area.addRepresentation(new Forest(area, mapData));
+				area.addRepresentation(new Forest(area));
+				// System.out.println("Forest");
 			}
 			
 		}
@@ -223,16 +235,21 @@ public class TreeModule extends ConfigurableWorldModule {
 		double stemRatio = coniferous?0.3:0.5;
 		double radius = height*TREE_RADIUS_PER_HEIGHT;
 		
-		target.drawColumn(Materials.TREE_TRUNK,
-				null, posXYZ, height*stemRatio,
-				radius / 4, radius / 5, false, true);
-		
-		target.drawColumn(Materials.TREE_CROWN,
-				null, posXYZ.y(posXYZ.y+height*stemRatio),
-				height*(1-stemRatio),
-				radius,
-				coniferous ? 0 : radius,
-				true, true);
+		// target.drawColumn(Materials.TREE_TRUNK,
+				// null, posXYZ, height*stemRatio,
+				// radius / 4, radius / 5, false, true);
+		// 
+		// target.drawColumn(Materials.TREE_CROWN,
+				// null, posXYZ.y(posXYZ.y+height*stemRatio),
+				// height*(1-stemRatio),
+				// radius,
+				// coniferous ? 0 : radius,
+				// true, true);
+        double width = radius;
+        double depth = radius;
+        target.drawBox(Materials.TREE_TRUNK,
+					posXYZ, VectorXZ.Z_UNIT, height, width, depth);
+
 	}
 	
 	/**
@@ -450,119 +467,143 @@ public class TreeModule extends ConfigurableWorldModule {
 	}
 	
 
-	public class Forest implements AreaWorldObject,
-		RenderableToPOVRay, RenderableToFaceTarget, RenderableToAllTargets {
+	// public class Forest implements AreaWorldObject,
+	// 	RenderableToPOVRay, RenderableToFaceTarget, RenderableToAllTargets {
+	public static class Forest extends NetworkAreaWorldObject
+		implements RenderableToAllTargets, TerrainBoundaryWorldObject {
 
-		private final MapArea area;
-		private final MapData mapData;
+
+		// private final MapArea area;
+		// private final MapData mapData;
 		
-		private Collection<EleConnector> treeConnectors = null;
+		// private Collection<EleConnector> treeConnectors = null;
 
-		private final LeafType leafType;
-		private final LeafCycle leafCycle;
-		private final TreeSpecies species;
+		// private final LeafType leafType;
+		// private final LeafCycle leafCycle;
+		// private final TreeSpecies species;
+		// 
+		// public Forest(MapArea area, MapData mapData) {
+		// 	
+		// 	this.area = area;
+		// 	this.mapData = mapData;
+
+			// leafType = LeafType.getValue(area.getTags());
+			// leafCycle = LeafCycle.getValue(area.getTags());
+			// species = TreeSpecies.getValue(area.getTags());
+			// 
+		// }
 		
-		public Forest(MapArea area, MapData mapData) {
-			
-			this.area = area;
-			this.mapData = mapData;
-
-			leafType = LeafType.getValue(area.getTags());
-			leafCycle = LeafCycle.getValue(area.getTags());
-			species = TreeSpecies.getValue(area.getTags());
-			
+        public Forest(MapArea area) {
+			 super(area);
 		}
 
-		private void createTreeConnectors(double density) {
-			
-			/* collect other objects that the trees should not be placed on */
-			
-			Collection<WorldObject> avoidedObjects = new ArrayList<WorldObject>();
-			
-			for (MapOverlap<?, ?> overlap : area.getOverlaps()) {
-				for (WorldObject otherRep : overlap.getOther(area).getRepresentations()) {
-					
-					if (otherRep.getGroundState() == GroundState.ON) {
-						avoidedObjects.add(otherRep);
-					}
-				
-				}
-			}
-			
-			/* place the trees */
-			
-			List<VectorXZ> treePositions =
-				GeometryUtil.distributePointsOn(area.getOsmObject().id,
-						area.getPolygon(), mapData.getBoundary(),
-						density, 0.3f);
-			
-			filterWorldObjectCollisions(treePositions, avoidedObjects);
-			
-			/* create a terrain connector for each tree */
-			
-			treeConnectors = new ArrayList<EleConnector>(treePositions.size());
-			
-			for (VectorXZ treePosition : treePositions) {
-				treeConnectors.add(new EleConnector(
-						treePosition, null, getGroundState()));
-			}
-			
-		}
+		// private void createTreeConnectors(double density) {
+			// 
+			// /* collect other objects that the trees should not be placed on */
+			// 
+			// Collection<WorldObject> avoidedObjects = new ArrayList<WorldObject>();
+			// 
+			// for (MapOverlap<?, ?> overlap : area.getOverlaps()) {
+				// for (WorldObject otherRep : overlap.getOther(area).getRepresentations()) {
+					// 
+					// if (otherRep.getGroundState() == GroundState.ON) {
+						// avoidedObjects.add(otherRep);
+					// }
+				// 
+				// }
+			// }
+			// 
+			// /* place the trees */
+			// 
+			// List<VectorXZ> treePositions =
+				// GeometryUtil.distributePointsOn(area.getOsmObject().id,
+						// area.getPolygon(), mapData.getBoundary(),
+						// density, 0.3f);
+			// 
+			// filterWorldObjectCollisions(treePositions, avoidedObjects);
+			// 
+			// /* create a terrain connector for each tree */
+			// 
+			// treeConnectors = new ArrayList<EleConnector>(treePositions.size());
+			// 
+			// for (VectorXZ treePosition : treePositions) {
+				// treeConnectors.add(new EleConnector(
+						// treePosition, null, getGroundState()));
+			// }
+			// 
+		// }
 		
-		@Override
-		public MapArea getPrimaryMapElement() {
-			return area;
-		}
-		
-		@Override
-		public Iterable<EleConnector> getEleConnectors() {
-			
-			if (treeConnectors == null) {
-				createTreeConnectors(config.getDouble("treesPerSquareMeter", 0.01f));
-			}
-			
-			return treeConnectors;
-			
-		}
+		// @Override
+		// public MapArea getPrimaryMapElement() {
+			// return area;
+		// }
+		// 
+		// @Override
+		// public Iterable<EleConnector> getEleConnectors() {
+			// // 
+			// // if (treeConnectors == null) {
+				// // createTreeConnectors(config.getDouble("treesPerSquareMeter", 0.01f));
+			// // }
+			// // 
+			// return treeConnectors;
+			// 
+		// }
 
-		@Override
-		public void defineEleConstraints(EleConstraintEnforcer enforcer) {}
+		// @Override
+		// public void defineEleConstraints(EleConstraintEnforcer enforcer) {}
 		
 		@Override
 		public GroundState getGroundState() {
 			return GroundState.ON;
 		}
 		
-		@Override
-		public void renderTo(POVRayTarget target) {
-			for (EleConnector treeConnector : treeConnectors) {
-				renderTree(target, area, treeConnector.getPosXYZ(),
-						leafType, leafCycle, species);
-			}
-		}
+		// @Override
+		// public void renderTo(POVRayTarget target) {
+			// for (EleConnector treeConnector : treeConnectors) {
+			// 	renderTree(target, area, treeConnector.getPosXYZ(),
+			// 			leafType, leafCycle, species);
+			// }
+		// }
+		
+		// @Override
+		// public void addDeclarationsTo(POVRayTarget target) {
+			// addTreeDeclarationsTo(target);
+		// }
+		
+		// @Override
+		// public void renderTo(FaceTarget<?> target) {
+			// for (EleConnector treeConnector : treeConnectors) {
+				// renderTree(target, area, treeConnector.getPosXYZ(),
+						// leafType, leafCycle, species);
+				// target.flushReconstructedFaces();
+			// }
+		// }
+		
+		// @Override
+		// public void renderTo(Target<?> target) {
+			// for (EleConnector treeConnector : treeConnectors) {
+				// renderTree(target, area, treeConnector.getPosXYZ(),
+						// leafType, leafCycle, species);
+			// }
+		// }
+		
+		// @Override
+		// public GroundState getGroundState() {
+			// return GroundState.ON;
+		// }
 		
 		@Override
-		public void addDeclarationsTo(POVRayTarget target) {
-			addTreeDeclarationsTo(target);
-		}
-		
-		@Override
-		public void renderTo(FaceTarget<?> target) {
-			for (EleConnector treeConnector : treeConnectors) {
-				renderTree(target, area, treeConnector.getPosXYZ(),
-						leafType, leafCycle, species);
-				target.flushReconstructedFaces();
-			}
+		public void defineEleConstraints(EleConstraintEnforcer enforcer) {
+			enforcer.requireSameEle(getEleConnectors());
 		}
 		
 		@Override
 		public void renderTo(Target<?> target) {
-			for (EleConnector treeConnector : treeConnectors) {
-				renderTree(target, area, treeConnector.getPosXYZ(),
-						leafType, leafCycle, species);
-			}
+			Collection<TriangleXYZ> triangles = getTriangulation();
+			target.drawTriangles(GRASS, triangles,
+					triangleTexCoordLists(triangles, GRASS, GLOBAL_X_Z));
 		}
-		
+
 	}
 		
 }

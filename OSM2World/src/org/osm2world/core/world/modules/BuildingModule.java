@@ -85,11 +85,25 @@ public class BuildingModule extends ConfigurableWorldModule {
 		boolean useBuildingColors = config.getBoolean("useBuildingColors", false);
 		boolean drawBuildingWindows = config.getBoolean("drawBuildingWindows", false);
 		
+		// added checking of nodes since some buildings were missing
+		for (MapNode node : mapData.getMapNodes()) {
+
+			String buildingValue = node.getTags().getValue("building");
+			if (buildingValue != null && !buildingValue.equals("no")) {
+			    System.out.println("Building node (not processed by osm2world):"+node.getTags().getValue("name"));
+				// Building building = new Building(node,
+						// useBuildingColors, drawBuildingWindows);
+				// node.addRepresentation(building);
+			}
+			
+		}
+		
 		for (MapArea area : mapData.getMapAreas()) {
 			
 			if (!area.getRepresentations().isEmpty()) continue;
 			
 			String buildingValue = area.getTags().getValue("building");
+			System.out.println("Building?:"+area.getTags().getValue("name"));
 			
 			if (buildingValue != null && !buildingValue.equals("no")) {
 				

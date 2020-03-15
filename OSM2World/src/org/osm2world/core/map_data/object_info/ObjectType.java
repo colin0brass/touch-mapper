@@ -33,9 +33,12 @@ public class ObjectType {
 		if (tags.containsKey("cuisine") || tags.contains("amenity", "restaurant")) {
 			return poi("restaurant");
 		}
-//		if (tags.contains("")) {
-//			return poi("");
-//		}
+		// if (tags.contains("amenity", "community_centre")) {
+			// return poi("community_centre");
+		// }
+		// if (tags.contains("")) {
+			// return poi("");
+		// }
 		return new ObjectType(MainType.UNKNOWN, "");
 	}
 	

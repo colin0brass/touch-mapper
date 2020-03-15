@@ -151,11 +151,12 @@ public class ObjTarget extends FaceTarget<RenderableToObj> {
 				|| tags.contains("man_made", "breakwater")) {
 			return true;
 		}
-		String footValue = tags.getValue("foot");
-		if ("yes".equals(footValue)
-			|| "designated".equals(footValue)) {
-			return true;
-		}
+		// removed since was incorrectly designating some primary roads as pedestrian
+		// String footValue = tags.getValue("foot");
+		// if ("yes".equals(footValue)
+			// || "designated".equals(footValue)) {
+			// return true;
+		// }
 		return false;
 	}
 

@@ -849,7 +849,9 @@ public class RoadModule extends ConfigurableWorldModule {
 				float mmToUnits = TM_SCALE / 1000;
 				float minRoadWidth = TM_EXTRUDER * ROAD_WIDTH_MULTIPLIER * mmToUnits;
 				float sizesScaling = TM_SCALE / 3100; // historically things were tuned for scale 3100
-				this.width = Math.max(minRoadWidth, calculateWidth() * 0.8f * sizesScaling);
+				/* this.width = Math.max(minRoadWidth, calculateWidth() * 0.8f * sizesScaling);*/
+				/* trying an experiment to see which part is making the roads too wide */
+				this.width = minRoadWidth;
 				laneLayout.setCalculatedValues(width);
 			}
 			

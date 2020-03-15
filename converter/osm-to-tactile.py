@@ -1,4 +1,5 @@
-#!/usr/bin/python3 -u
+#!/usr/bin/env python3
+### Commented out #!/usr/bin/python3 -u
 
 import argparse
 import re
@@ -18,6 +19,7 @@ def do_cmdline():
     parser.add_argument('--size', metavar='CM', type=float, required=True, help="print size in cm")
     parser.add_argument('--no-borders', action='store_true', help="don't draw borders around the edges")
     parser.add_argument('--exclude-buildings', action='store_true', help="don't include buildings")
+    parser.add_argument('--config', metavar='CONFIG_FILE', default=None, help='config file path')
     args = parser.parse_args()
     return args
 
@@ -32,7 +34,7 @@ def subprocess_output(cmd, env=None):
         print("subprocess failed with error code: {}".format(e.output.decode("utf-8")))
         raise e
 
-def run_osm2world(input_path, output_path, scale, exclude_buildings):
+def run_osm2world(input_path, output_path, scale, exclude_buildings, config):
     osm2world_path = os.path.join(script_dir, 'OSM2World', 'build', 'OSM2World.jar')
     #print(osm2world_path + " " + input_path + " " + output_path)
     cmd = [
@@ -40,6 +42,8 @@ def run_osm2world(input_path, output_path, scale, exclude_buildings):
         '-jar', osm2world_path,
         '-i', input_path,
         '-o', output_path]
+    if config != None:
+        cmd = cmd+['--config', config]
     output = subprocess_output(cmd, { 'TOUCH_MAPPER_SCALE': str(scale), 'TOUCH_MAPPER_EXTRUDER_WIDTH': '0.4', 'TOUCH_MAPPER_EXCLUDE_BUILDINGS': ('true' if exclude_buildings else 'false') })
     print(output)
 
@@ -68,7 +72,8 @@ def run_blender(obj_path, bounds, args):
     blender_dir = os.path.join(script_dir, 'blender')
     blender_env = os.environ.copy()
     blender_env['LD_LIBRARY_PATH'] = os.path.join(blender_dir, 'lib') + ":" + blender_env.get('LD_LIBRARY_PATH', '')
-    blender_path = os.path.join(blender_dir, 'blender')
+    #blender_path = os.path.realpath(os.path.join(blender_dir, 'blender'))
+    blender_path = os.path.realpath(blender_dir)
     obj_to_tactile_path = os.path.join(script_dir, 'obj-to-tactile.py')
     blender_args = [
         #'--debug',
@@ -93,6 +98,7 @@ def run_blender(obj_path, bounds, args):
     if args.marker1:
         script_args.extend(('--marker1', args.marker1))
     cmd = [blender_path] + blender_args + ['--python', obj_to_tactile_path, '--'] + script_args + [obj_path]
+    print('Running:', cmd)
     output = subprocess_output(cmd)
     
     # Strip junk output by OBJ importer
@@ -121,18 +127,21 @@ def main():
     args = do_cmdline()
     osm_path = args.input
     input_basename, input_extension = os.path.splitext(osm_path)
-    if input_extension.lower() != '.osm':
-        raise Exception("input file must have extension .osm")
+    if (input_extension.lower() != '.osm') and (input_extension.lower() != '.xml'):
+        raise Exception("input file must have extension .osm or .xml")
     input_dir = os.path.dirname(osm_path)
 
     # Run OSM2World
     obj_path = input_basename + '.obj'
-    meta = run_osm2world(osm_path, obj_path, args.scale, args.exclude_buildings)
+    meta = run_osm2world(osm_path, obj_path, args.scale, args.exclude_buildings, args.config)
 
     print_size(args.scale, meta['bounds'])
 
     # Run Blender
     meta_path = input_basename + '-meta.json'
+    print('Object path:', obj_path)
+    print('Meta bounds:', meta['bounds'])
+    print('Args:', args)
     blender_meta = run_blender(obj_path, meta['bounds'], args)
     meta.update(blender_meta)
     with open(meta_path, 'w') as f:
